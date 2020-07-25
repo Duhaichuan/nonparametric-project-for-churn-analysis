@@ -1,0 +1,345 @@
+---
+title: "Nonparamatric_project"
+author: "Haichuan Du"
+date: "7/6/2020"
+output:
+  word_document: default
+---
+
+
+```{r}
+library(tidyverse)
+library(BSDA)
+library(clinfun)
+library(jmuOutlier) 
+library(gmodels)
+library(testforDEP)
+library(ggplot2)
+library(corrplot)
+library(testforDEP) #Testing for dependency using Hoeffding's test and others.
+```
+
+data source:  https://www.kaggle.com/blastchar/telco-customer-churn
+```{r}
+setwd("~/Desktop/statistics/Nonparametric/project")
+```
+customerID: Customer ID
+genderCustomer: gender (female, male)
+SeniorCitizen: Whether the customer is a senior citizen or not (1, 0)
+PartnerWhether: the customer has a partner or not (Yes, No)
+Dependents: Whether the customer has dependents or not (Yes, No)
+tenure: Number of months the customer has stayed with the company<-----------------------------------------
+PhoneService: Whether the customer has a phone service or not (Yes, No)
+MultipleLines: Whether the customer has multiple lines or not (Yes, No, No phone service)
+InternetService: Customer’s internet service provider (DSL, Fiber optic, No)
+OnlineSecurity: Whether the customer has online security or not (Yes, No, No internet service)
+OnlineBackup: Whether the customer has online backup or not (Yes, No, No internet service)
+DeviceProtection: Whether the customer has device protection or not (Yes, No, No internet service)
+TechSupport: Whether the customer has tech support or not (Yes, No, No internet service)
+StreamingTV: Whether the customer has streaming TV or not (Yes, No, No internet service)
+StreamingMovies: Whether the customer has streaming movies or not (Yes, No, No internet service)
+Contract: The contract term of the customer (Month-to-month, One year, Two year)
+PaperlessBilling: Whether the customer has paperless billing or not (Yes, No)
+PaymentMethod: The customer’s payment method (Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic))
+MonthlyCharges: The amount charged to the customer monthly
+TotalCharges: The total amount charged to the customer   <----------------------------------
+Churn: Whether the customer churned or not (Yes or No) <-------------------------------------
+
+# Read data
+```{r}
+churn_data <- read.csv("churn.csv")
+churnT <- churn_data
+head(churn_data)
+attach(churn_data)
+```
+#Exploratory data analysis
+
+Check dimension
+```{r}
+dim(churn_data)
+```
+
+check data format
+```{r}
+str(churn_data)
+```
+
+check  NA 
+```{r}
+num.NA <- sort(colSums(is.na(churn_data)), decreasing = TRUE)
+subset(churn_data, is.na(churn_data$TotalCharges))
+churn_data <- churn_data[-c(which(is.na(churn_data$TotalCharges))),]
+```
+Since the number of rows with NaN values are very small, and taking into consideration that all of them are churn=”NO”, which is over-represented in the data. We will just delete those rows from the working data
+
+
+```{r}
+# create a vertors changing tenure from monthly to year
+churn_data$tenureToYear <- cut(churn_data$tenure, c(0,12,24,36,48,60,72), labels=c(1:6) )
+churn_data$SeniorCitizen <- as.factor(churn_data$SeniorCitizen)
+# Create vectors of Yes_churn and No_churn
+Yes_churn <- churn_data %>%
+  filter(Churn == "Yes")
+No_churn <- churn_data %>%
+  filter(Churn == "No")
+
+Yes_Partner <- churn_data %>%
+  filter(Partner == "Yes")
+No_Partner <- churn_data %>%
+  filter(Partner == "No")
+```
+
+
+```{r}
+library(miscset)
+#user attributes
+ggplotGrid(ncol=2,lapply(c("gender","SeniorCitizen","Partner","Dependents"),
+           function(col){ggplot(churn_data,aes_string(col)) + geom_bar(aes(fill=Churn),position="dodge")}))
+
+#contract attributes
+ggplotGrid(ncol=2,lapply(c("Contract","tenureToYear","PaperlessBilling", "PaymentMethod"),
+           function(col){ggplot(churn_data,aes_string(col)) + geom_bar(aes(fill=Churn),position="dodge")}))
+
+ggplotGrid(ncol=2,lapply(c("tenure", "MonthlyCharges","TotalCharges"),
+           function(col){ggplot(churn_data,aes_string(col)) + geom_density(aes(col=Churn))}))
+
+#service attribures
+ggplotGrid(ncol=2,lapply(c("PhoneService","MultipleLines","InternetService"),
+           function(col){ggplot(churn_data,aes_string(col)) + geom_bar(aes(fill=Churn),position="dodge")}))
+
+ggplotGrid(ncol=2,lapply(c("TechSupport","OnlineSecurity","OnlineBackup","DeviceProtection","StreamingTV","StreamingMovies"),
+           function(col){ggplot(churn_data,aes_string(col)) + geom_bar(aes(fill=Churn),position="dodge")}))
+
+```
+
+Then I try both parametric and nonparametric test to see if churn is associated with these variables.
+```{r}
+CrossTable(Churn, gender, chisq = T, format = "SPSS")                 # p =  0.4698339
+chisq.test(Churn, gender, simulate.p.value=TRUE)                      # p-value = 0.4838
+
+CrossTable(Churn, SeniorCitizen, chisq = T, format = "SPSS")          # p =  9.477904e-3
+chisq.test(Churn, SeniorCitizen, simulate.p.value=T)                  # p-value = 0.0004998
+#Partner
+CrossTable(Churn, Partner, chisq = T, format = "SPSS")                # p =  1.519037e-36. 
+chisq.test(Churn, Partner, simulate.p.value=T)                        # p-value = 0.0004998.
+# Dependents
+CrossTable(Churn, Dependents, chisq = T, format = "SPSS")             # p =  3.276083e-43.  
+chisq.test(Churn, Dependents, simulate.p.value=T)                     # p-value = 0.0004998
+
+```
+
+K-S Test: (Monthly Charges)
+```{r}
+#kernal density plot
+plot(density(Yes_churn$MonthlyCharges), col = 2, main = "Density plot of MonthlyCharge", xlab = "MonthlyCharge")
+lines(density(No_churn$MonthlyCharges), col = 3)
+  legend("topright", c("Yes_Churn", "No_Churn"),
+         col = c(2, 3), lty = 1, cex=0.8, title = "Monthlycharge for Churn")
+
+#boxplot
+ggplot(data = churn_data, aes(Churn, MonthlyCharges, fill = Churn)) +
+  geom_boxplot(outlier.colour = "blue") +
+  labs(title = "Box plot of MonthlyCharges against Churn") +
+  theme(plot.title = element_text(hjus = 0.5)) 
+
+ks.test(Yes_churn$MonthlyCharges, No_churn$MonthlyCharges)
+
+plot(c(0,sort(Yes_churn$MonthlyCharges),200),c(0,1:length(Yes_churn$MonthlyCharges),length(Yes_churn$MonthlyCharges))/length(Yes_churn$MonthlyCharges),xlab='MonthlyCharge',type='s',ylab='EDF')
+lines(c(0,sort(No_churn$MonthlyCharges),200),c(0,1:length(No_churn$MonthlyCharges),length(No_churn$MonthlyCharges))/length(No_churn$MonthlyCharges),type='s',lty=2)
+
+# I also use sign test to see If my data match up with national averages 65.5 for monthly charge ?
+SIGN.test(MonthlyCharges, md = 65.5, conf.level = 0.95)
+t.test(MonthlyCharges, mu = 65.5, conf.level = 0.95)            
+```
+
+Wilcoxon Rank Sum Test: (Monthly Charges by Partner)
+```{r}
+ggplot(data = churn_data, aes(Partner, MonthlyCharges, fill = Partner)) +
+  geom_boxplot(outlier.colour = "blue") +
+  labs(title = "Box plot of MonthlyCharges against Partner") +
+  theme(plot.title = element_text(hjus = 0.5)) 
+
+wilcox.test(Yes_Partner$MonthlyCharges, No_Partner$MonthlyCharges, conf.int = T)
+t.test(Yes_Partner$MonthlyCharges, No_Partner$MonthlyCharges)
+```
+
+Association: Monthlycharges Vs. Tenure
+```{r}
+ggplot(data = churn_data, aes(tenure, MonthlyCharges, color = Contract)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "MonthlyCharges Vs. Tenure") +
+  xlab("Tenure (months)") +
+  theme(plot.title = element_text(hjus = 0.5))
+
+ggplot(data = churn_data, aes(tenure, MonthlyCharges, color = Churn)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "MonthlyCharges Vs. Tenure") +
+  xlab("Tenure (months)") +
+  theme(plot.title = element_text(hjus = 0.5))
+
+corrplot(cor(churn_data[sapply(churn_data, is.numeric)]), order="hclust", method = "number")
+perm.cor.test(tenure, MonthlyCharges, method='spearman') 
+cor.test(tenure, MonthlyCharges,method='pearson')
+```
+
+Does the contract have any effect on customer churn?
+```{r}
+ggplot(churn_data, aes(x = Contract, fill = Churn)) +
+  geom_bar() +
+  geom_text(aes(y = ..count.. -200, 
+                label = paste0(round(prop.table(..count..),4) * 100, '%')), 
+            stat = 'count', 
+            position = position_dodge(.1), 
+            size = 3) +
+  labs(title="Churn rate by contract status")
+# The churn rate of month-to-month contract customers is much higher than the longer contract customers. Customers who are more willing to commit to longer contracts are less likely to leave.
+
+ggplot(data = churn_data, aes(Churn, MonthlyCharges, fill = Contract)) +
+  geom_boxplot(outlier.colour = "blue") +
+  labs(title = "Box plot of MonthlyCharges for Chutract and Churn") +
+  theme(plot.title = element_text(hjus = 0.5)) 
+
+# plot(density(subset(No_churn, Contract=="One year")$MonthlyCharges), col = 2)
+# lines(density(subset(No_churn, Contract=="Month-to-month")$MonthlyCharges), col = 3) 
+# lines((density(subset(No_churn, Contract=="Two year")$MonthlyCharges)))
+
+#Ansari-Bratest Test: One Year  Vs.  Month-to-month (Is there much difference between a monthly contract and an annual contract?)
+ansari.test(subset(No_churn, Contract=="One year")$MonthlyCharges, subset(No_churn, Contract=="Month-to-month")$MonthlyCharges, alternative = "greater") 
+#Running the normal-theory F test.
+var.test(subset(No_churn, Contract=="One year")$MonthlyCharges, subset(No_churn, Contract=="Month-to-month")$MonthlyCharges, alternative = "greater") 
+
+#Wilcoxon Rank Sum Test: (Two Year Vs. One Year)  Is the monthly charge for one year and two years the same?
+wilcox.test(subset(No_churn, Contract=="One year")$MonthlyCharges, subset(No_churn, Contract=="Two year")$MonthlyCharges, conf.int = T)  
+t.test(subset(No_churn, Contract=="One year")$MonthlyCharges, subset(No_churn, Contract=="Two year")$MonthlyCharges) #p < 0.05 
+
+# median(subset(No_churn, Contract=="One year")$MonthlyCharges)
+
+#Kruskal–Wallis Test: (Month-to-month  Vs. Two Year Vs. One Year)  Is the monthly charge the same for all different contract?
+data_Monthlycharge <- c(subset(No_churn, Contract=="Month-to-month")$MonthlyCharges,
+                 subset(No_churn, Contract=="One year")$MonthlyCharges,
+                 subset(No_churn, Contract=="Two year")$MonthlyCharges) #Specifying which values are for which samples.
+groups=rep(1:3,c(2220,1306,1637)) #Specifying which values are for which samples.
+
+kruskal.test(data_Monthlycharge, groups)   # p value = 0.32
+summary(aov(data_Monthlycharge~factor(groups)))
+
+#Now develop the nonparametric approach.
+#First simulate to find the appropriate 
+# level for the pairwise intervals.
+#Second, compute the pairwise intervals 
+# for the earlier set of data.
+
+simultaneous8452=function(data,groups,conf.level){
+  #Note: The groups must be numbered from 1 to k.
+  k=max(groups) #Finding the number of groups.
+  nvec=double(k)
+  for (i in 1:k){
+    nvec[i]=sum(groups==i)} #Finding the sample sizes.
+  nruns=10000
+  minalpha=double(nruns)
+  N=sum(nvec) #Total sample size.
+  for (run in 1:nruns){
+    minalpha[run]=1
+    simdata=rnorm(N)
+    for (i in 1:(k-1)){
+      for (j in (i+1):k){
+        minalpha[run]=min(minalpha[run],wilcox.test(simdata[groups==i],simdata[groups==j])$p.value)}}}
+  crit2=quantile(minalpha,1-conf.level)
+  crit=max(minalpha[minalpha<crit2/1.000001])
+  cov=1-mean(minalpha<=crit*1.000001)
+  
+  #Now finding the conservative intervals.
+  ct=0
+  for (i in 1:(k-1)){
+    for (j in (i+1):k){
+      if (ct==0){mat=c(i,j,wilcox.test(data[groups==i],data[groups==j],conf.int=T,dcl=(1-crit)*1.000001)$conf.int)}
+      if (ct>0){mat=rbind(mat,c(i,j,wilcox.test(data[groups==i],data[groups==j],conf.int=T,dcl=(1-crit)*1.000001)$conf.int))}
+      ct=ct+1}}
+  mat
+  
+  list(crit=crit,cov=cov,mat=mat)}
+simultaneous8452(data_Monthlycharge,groups,0.95)
+
+summary(aov(data_Monthlycharge~factor(groups))) #anova F test P = 0.1
+TukeyHSD(aov(data_Monthlycharge~factor(groups)))  #Now finding Tukey's pairwise CIs 
+
+# 
+# data_Monthlycharge2 <- c(subset(Yes_churn, Contract=="Month-to-month")$MonthlyCharges,
+#                  subset(Yes_churn, Contract=="One year")$MonthlyCharges,
+#                  subset(Yes_churn, Contract=="Two year")$MonthlyCharges)
+# 
+# groups2=rep(1:3,c(1655,166,48)) #Specifying which values are for which samples.
+# 
+# jonckheere.test(data_Monthlycharge2, groups2, nperm = 2000, alternative = "increasing") #Jonckheere-Terpstra test. (clinfun)
+```
+
+
+Chi-Square Test/permutation chi square for churn vs service attributes
+```{r}
+# PhoneService
+CrossTable(Churn, PhoneService, chisq = T, format = "SPSS")
+chisq.test(Churn, PhoneService, simulate.p.value=T)
+# MultipleLines
+CrossTable(Churn, MultipleLines, chisq = T, format = "SPSS")
+chisq.test(Churn, MultipleLines, simulate.p.value=T)
+# OnlineSecurity
+CrossTable(Churn, OnlineSecurity, chisq = T, format = "SPSS")
+chisq.test(Churn, OnlineSecurity, simulate.p.value=T)
+# OnlineBackup
+CrossTable(Churn, OnlineBackup, chisq = T, format = "SPSS")
+chisq.test(Churn, OnlineBackup, simulate.p.value=T)
+# DeviceProtection
+CrossTable(Churn, DeviceProtection, chisq = T, format = "SPSS")
+chisq.test(Churn, DeviceProtection, simulate.p.value=T)
+# TechSupport
+CrossTable(Churn, TechSupport, chisq = T, format = "SPSS")
+chisq.test(Churn, TechSupport, simulate.p.value=T)
+# StreamingMovies
+CrossTable(Churn, StreamingMovies, chisq = T, format = "SPSS")
+chisq.test(Churn, StreamingMovies, simulate.p.value=T)
+# StreamingTV
+CrossTable(Churn, StreamingTV, chisq = T, format = "SPSS")
+chisq.test(Churn, StreamingTV, simulate.p.value=T)
+# Contract
+CrossTable(Churn, Contract, chisq = T, format = "SPSS")
+chisq.test(Churn, Contract, simulate.p.value=T)
+```
+
+Bootstrap
+```{r}
+oursample = churn_data
+index = nrow(oursample)
+Tenure_thetahat <- glm(Churn~tenure+MonthlyCharges+PhoneService+InternetService, family = "binomial", data = oursample)$coeff[2]
+MonthlyCharges_thetahat <- glm(Churn~tenure+MonthlyCharges+PhoneService+InternetService, family = "binomial", data = oursample)$coeff[3]
+PhoneService_thetahat <- glm(Churn~tenure+MonthlyCharges+PhoneService+InternetService, family = "binomial", data = oursample)$coeff[4]
+InternetService_thetahat <- glm(Churn~tenure+MonthlyCharges+PhoneService+InternetService, family = "binomial", data = oursample)$coeff[5]
+
+Tenure_thetahat
+MonthlyCharges_thetahat
+PhoneService_thetahat
+InternetService_thetahat
+
+Tenure_thetahat.b = rep(NA,1000); MonthlyCharges_thetahat.b = rep(NA,1000); PhoneService_thetahat.b = rep(NA,1000); InternetService_thetahat.b = rep(NA,1000)
+for (i in 1:1000) {
+  ### draw the bootstrap sample and calculate thetahat.b
+  bootindex = sample(1:index, index, replace=T)
+  bootsample = oursample[bootindex,]
+  Tenure_thetahat.b[i] = glm(Churn~tenure+MonthlyCharges+PhoneService+InternetService, family = "binomial", data = bootsample)$coeff[2]
+  MonthlyCharges_thetahat.b[i] = glm(Churn~tenure+MonthlyCharges+PhoneService+InternetService, family = "binomial", data = bootsample)$coeff[3]
+  PhoneService_thetahat.b[i] = glm(Churn~tenure+MonthlyCharges+PhoneService+InternetService, family = "binomial", data = bootsample)$coeff[4]
+  InternetService_thetahat.b[i] = glm(Churn~tenure+MonthlyCharges+PhoneService+InternetService, family = "binomial", data = bootsample)$coeff[5]
+}
+
+par(mfrow=c(2,2))
+hist(Tenure_thetahat.b); hist(MonthlyCharges_thetahat.b); hist(PhoneService_thetahat.b); hist(InternetService_thetahat.b)
+
+quantile(Tenure_thetahat.b,c(0.025,0.975))
+quantile(MonthlyCharges_thetahat.b,c(0.025,0.975))
+quantile(PhoneService_thetahat.b,c(0.025,0.975))
+quantile(InternetService_thetahat.b,c(0.025,0.975))
+```
+
+
+
